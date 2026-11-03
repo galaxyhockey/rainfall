@@ -1,0 +1,458 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Rainfall</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="theme-color" content="#0B2233">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@200;300;400;500;600&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="data.js"></script>
+<style>
+  :root[data-theme=dark] {
+    --text:#FFFFFF; --sub:rgba(255,255,255,0.82); --glass:rgba(255,255,255,0.14); --line:rgba(255,255,255,0.3);
+    --accent:#7FD3F0; --accentText:#BFE6F5; --track:rgba(255,255,255,0.18); --div:rgba(255,255,255,0.18);
+    --onBg:#FFFFFF; --onFg:#0B2233; --sun:#FFD58A; --grad:linear-gradient(90deg,#7FD3F0,#FFD58A);
+    --bg:linear-gradient(170deg,#0B2233 0%,#1C4560 55%,#2B5F78 100%); --blobA:#3FA7C9; --blobB:#6B7CFF; --streak:#FFFFFF;
+    --rain:#7FD3F0; --heavy:#B58CFF; --base:#0B2233;
+  }
+  :root[data-theme=light] {
+    --text:#0F2A43; --sub:#38546E; --glass:rgba(255,255,255,0.55); --line:rgba(255,255,255,0.9);
+    --accent:#3A8FC4; --accentText:#1F6A9A; --track:rgba(15,42,67,0.14); --div:rgba(15,42,67,0.12);
+    --onBg:#0F2A43; --onFg:#FFFFFF; --sun:#D98E00; --grad:linear-gradient(90deg,#5FA8E8,#F0A91C);
+    --bg:linear-gradient(170deg,#BFDDF2 0%,#DCEBF8 55%,#EEF4FA 100%); --blobA:#7CC4F0; --blobB:#B7A8FF; --streak:#2F6A8F;
+    --rain:#3A8FC4; --heavy:#7B4FD0; --base:#DCEBF8;
+  }
+  * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
+  html, body { margin:0; min-height:100%; background:var(--base); }
+  body { font-family:'Outfit', system-ui, sans-serif; color:var(--text); }
+  .app { position:relative; max-width:430px; min-height:100dvh; margin:0 auto; overflow:hidden; background:var(--bg); }
+  .backdrop { position:fixed; inset:0; max-width:430px; margin:0 auto; pointer-events:none; overflow:hidden; }
+  .blob { position:absolute; border-radius:50%; }
+  .blob.a { left:-80px; top:120px; width:280px; height:280px; background:var(--blobA); opacity:.4; filter:blur(60px); }
+  .blob.b { right:-90px; top:440px; width:300px; height:300px; background:var(--blobB); opacity:.35; filter:blur(70px); }
+  .streaks { position:absolute; inset:0; stroke:var(--streak); opacity:.2; }
+  .screen { position:relative; padding:calc(26px + env(safe-area-inset-top)) 20px 110px; display:none; flex-direction:column; gap:12px; }
+  .screen.on { display:flex; }
+  .glass { background:var(--glass); border:1px solid var(--line); border-radius:26px; backdrop-filter:blur(22px); -webkit-backdrop-filter:blur(22px); }
+  .sub { color:var(--sub); }
+  .acc { color:var(--accentText); }
+  h1 { margin:0; font-size:32px; font-weight:500; letter-spacing:-0.02em; }
+  .title { display:flex; flex-direction:column; padding:0 4px; }
+  .label { font-size:12px; font-weight:600; letter-spacing:.08em; color:var(--sub); }
+  .row-between { display:flex; justify-content:space-between; align-items:baseline; }
+  .ticks { display:flex; justify-content:space-between; font-size:12px; color:var(--sub); }
+  svg.i { fill:none; stroke:currentColor; stroke-linecap:round; stroke-linejoin:round; flex:none; }
+  button { font-family:inherit; }
+  .round-btn { width:44px; height:44px; border-radius:22px; border:1px solid var(--line); background:var(--glass); color:var(--text); display:flex; align-items:center; justify-content:center; cursor:pointer; }
+
+  /* Now */
+  .big { font-size:120px; line-height:.95; font-weight:200; letter-spacing:-0.05em; margin-left:-4px; }
+  .bars { display:flex; align-items:flex-end; gap:5px; height:44px; }
+  .bars div { flex:1; border-radius:3px; background:var(--accent); }
+  .strip { display:flex; justify-content:space-between; padding:12px 6px; }
+  .strip > div { flex:1; display:flex; flex-direction:column; align-items:center; gap:3px; }
+  .tiles { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+  .tile { border-radius:22px; padding:12px 16px; display:flex; flex-direction:column; }
+  .tile .v { font-size:24px; } .tile .v small { font-size:14px; }
+
+  /* lists */
+  .list { padding:4px 18px; display:flex; flex-direction:column; }
+  .list > div { display:flex; align-items:center; gap:10px; border-top:1px solid var(--div); }
+  .list > div:first-child { border-top:none; }
+  .hr { height:44px; gap:12px !important; }
+  .meter { height:6px; border-radius:3px; background:var(--track); position:relative; }
+  .meter i { position:absolute; top:0; bottom:0; border-radius:3px; }
+  .wk { height:58px; }
+
+  /* radar */
+  .chips { display:flex; gap:8px; }
+  .chip { height:44px; padding:0 18px; border-radius:22px; border:1px solid var(--line); background:var(--glass); color:var(--text); font-size:14px; cursor:pointer; }
+  .chip[aria-pressed=true] { background:var(--onBg); border-color:var(--onBg); color:var(--onFg); font-weight:600; }
+  #map { height:360px; border-radius:20px; background:var(--base); }
+  .leaflet-container { font-family:inherit; }
+  .stn { background:#000b; color:#fff; border-radius:6px; padding:1px 6px; font-weight:600; font-size:12px; white-space:nowrap; transform:translate(-50%,-50%); width:max-content; }
+  .stn b { color:#FFD58A; }
+  .play { width:48px; height:48px; border-radius:24px; border:0; background:var(--onBg); color:var(--onFg); display:flex; align-items:center; justify-content:center; cursor:pointer; flex:none; }
+  input[type=range] { width:100%; accent-color:var(--accent); margin:0; }
+
+  /* places */
+  .place { height:74px; border-radius:22px; padding:0 18px; display:flex; align-items:center; gap:12px; }
+  .place.home { border-color:var(--text); }
+  .seg { display:flex; gap:6px; }
+
+  /* tab bar */
+  nav { position:fixed; left:0; right:0; bottom:0; max-width:430px; margin:0 auto; padding:0 20px calc(14px + env(safe-area-inset-bottom)); z-index:1000; }
+  nav .bar { height:62px; display:flex; justify-content:space-between; align-items:center; padding:0 6px; border-radius:31px; }
+  nav a { width:64px; height:50px; border-radius:25px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; text-decoration:none; color:var(--text); font-size:11px; font-weight:500; }
+  nav a[aria-current=page] { background:var(--onBg); color:var(--onFg); }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="backdrop" aria-hidden="true">
+    <div class="blob a"></div><div class="blob b"></div>
+    <svg class="streaks" width="430" height="844" viewBox="0 0 390 844" stroke-width="1.2" stroke-linecap="round">
+      <line x1="30" y1="40" x2="22" y2="76"/><line x1="120" y1="20" x2="112" y2="58"/><line x1="214" y1="60" x2="206" y2="98"/>
+      <line x1="300" y1="30" x2="292" y2="68"/><line x1="78" y1="190" x2="70" y2="228"/><line x1="170" y1="130" x2="162" y2="170"/>
+      <line x1="262" y1="210" x2="254" y2="250"/><line x1="340" y1="150" x2="332" y2="188"/><line x1="52" y1="320" x2="44" y2="358"/>
+      <line x1="236" y1="330" x2="228" y2="368"/><line x1="366" y1="300" x2="358" y2="338"/><line x1="150" y1="480" x2="142" y2="518"/>
+      <line x1="320" y1="520" x2="312" y2="558"/><line x1="60" y1="600" x2="52" y2="638"/><line x1="230" y1="640" x2="222" y2="678"/>
+    </svg>
+  </div>
+
+  <main>
+    <section class="screen" id="now" aria-label="Now"></section>
+    <section class="screen" id="hourly" aria-label="Hourly"></section>
+    <section class="screen" id="week" aria-label="Week"></section>
+    <section class="screen" id="radar" aria-label="Radar">
+      <div class="title"><h1>Radar</h1><span class="sub" id="radarSub" style="font-size:14px"></span></div>
+      <div class="chips" role="group" aria-label="Map layer">
+        <button class="chip" data-layer="rain">Rain</button>
+        <button class="chip" data-layer="wind">Wind</button>
+        <button class="chip" data-layer="temp">Temp</button>
+      </div>
+      <div class="glass" style="padding:8px; display:flex; flex-direction:column; gap:8px">
+        <div id="map"></div>
+        <div id="legend" style="display:flex; align-items:center; gap:10px; padding:0 8px 6px; font-size:12px" class="sub"></div>
+      </div>
+      <div class="glass" id="player" style="padding:8px 16px 8px 8px; display:flex; align-items:center; gap:12px">
+        <button class="play" id="play" aria-label="Play animation"></button>
+        <div style="flex:1; display:flex; flex-direction:column; gap:6px">
+          <input type="range" id="frame" min="0" value="0" aria-label="Time">
+          <div class="ticks"><span id="t0"></span><span id="tcur" style="color:var(--text); font-weight:600"></span><span id="t1"></span></div>
+        </div>
+      </div>
+    </section>
+    <section class="screen" id="places" aria-label="Places"></section>
+  </main>
+
+  <nav aria-label="Main"><div class="bar glass" id="tabs"></div></nav>
+</div>
+
+<script>
+const W = window.WX;
+// ---------- icons (stroke paths from the Rainfall design) ----------
+const P = {
+  sun: 'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.4 1.4M17.6 17.6L19 19M5 19l1.4-1.4M17.6 6.4L19 5',
+  moon: 'M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z',
+  cloudy: 'M7 18h10a4 4 0 0 0 .6-7.95A5.5 5.5 0 0 0 7 9.5 4.25 4.25 0 0 0 7 18z',
+  partly: 'M8 2.5v1.5M2.5 8H4M4.1 4.1l1 1M11.9 4.1l-1 1M5.6 10.4A3 3 0 1 1 10.9 7M9 20.5h8a3.5 3.5 0 0 0 .5-6.96A4.8 4.8 0 0 0 9 12.8a3.9 3.9 0 0 0 0 7.7z',
+  rain: 'M7 15h10a4 4 0 0 0 .6-7.95A5.5 5.5 0 0 0 7 6.5 4.25 4.25 0 0 0 7 15zM9 18l-.8 2.5M13 18l-.8 2.5M17 18l-.8 2.5',
+  storm: 'M7 15h10a4 4 0 0 0 .6-7.95A5.5 5.5 0 0 0 7 6.5 4.25 4.25 0 0 0 7 15zM12.5 15.5l-2 3h3l-2 3',
+  snow: 'M12 3v18M4.2 7.5l15.6 9M19.8 7.5l-15.6 9',
+  drop: 'M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z',
+  search: 'M11 4.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zM16 16l4.5 4.5',
+};
+const NAMES = { sun:"Clear", moon:"Clear", partly:"Partly cloudy", cloudy:"Cloudy", rain:"Rain", storm:"Thunderstorms", snow:"Snow" };
+const svg = (name, size = 22, sw = 1.6, label) =>
+  `<svg class="i" width="${size}" height="${size}" viewBox="0 0 24 24" stroke-width="${sw}" ${label ? `role="img" aria-label="${label}"` : 'aria-hidden="true"'}><path d="${P[name]}"/></svg>`;
+
+const sunrise = W.nowcast ? new Date(W.nowcast.sunrise) : null, sunset = W.nowcast ? new Date(W.nowcast.sunset) : null;
+const isNight = t => { if (!sunrise) return false; const m = t.getHours() * 60 + t.getMinutes(), r = sunrise.getHours() * 60 + sunrise.getMinutes(), s = sunset.getHours() * 60 + sunset.getMinutes(); return m < r || m >= s; };
+const iconAt = (name, t) => name === "sun" && isNight(t) ? "moon" : name === "partly" && isNight(t) ? "cloudy" : name;
+const wmo = c => c <= 1 ? "sun" : c === 2 ? "partly" : c <= 48 ? "cloudy" : c >= 95 ? "storm" : (c >= 71 && c <= 77) || c === 85 || c === 86 ? "snow" : "rain";
+const hr = iso => new Date(iso).toLocaleTimeString([], { hour:"numeric" });
+const hm = d => d.toLocaleTimeString([], { hour:"numeric", minute:"2-digit" });
+const dayName = (d, i) => i === 0 ? "Today" : new Date(d + "T12:00").toLocaleDateString([], { weekday:"short" });
+const compass = deg => typeof deg === "number" ? ["N","NE","E","SE","S","SW","W","NW"][Math.round(deg / 45) % 8] : "";
+function feelsLike(t, wind, rh) {
+  if (t <= 50 && wind > 3) return 35.74 + 0.6215 * t - 35.75 * wind ** 0.16 + 0.4275 * t * wind ** 0.16; // NWS wind chill
+  if (t >= 80 && rh != null) return -42.379 + 2.04901523 * t + 10.14333127 * rh - 0.22475541 * t * rh - 0.00683783 * t * t
+    - 0.05481717 * rh * rh + 0.00122874 * t * t * rh + 0.00085282 * t * rh * rh - 0.00000199 * t * t * rh * rh; // NWS heat index
+  return t;
+}
+
+const home = (W.obs || []).find(o => o.id === "KBLV");
+const H = W.hourly, D = W.daily, now = new Date();
+const curTemp = home ? home.temp : H[0].temp, curWind = home ? home.wind : H[0].wind, curRh = home && home.rh != null ? home.rh : H[0].rh;
+const curIcon = iconAt(H[0].icon, now);
+
+// ---------- Now ----------
+function nowcastText() {
+  const n = W.nowcast; if (!n) return ["Next 3 hours", []];
+  // each value is rain in the 15 min ending at its timestamp; keep slots that aren't over yet, measured from the real clock
+  const slots = n.times.map((t, i) => ({ end: new Date(t), p: n.precip[i] })).filter(s => s.end > now).slice(0, 12);
+  const p = slots.map(s => s.p), wet = p.map(x => x >= 0.002), mins = s => Math.max(5, Math.round((s.end - now) / 60000 / 5) * 5);
+  if (wet[0]) { const i = wet.indexOf(false); return [i < 0 ? "Rain for the next few hours" : `Rain easing in ${mins(slots[i - 1])} min`, p]; }
+  const i = wet.indexOf(true);
+  return [i < 0 ? "No rain next 3 hours" : `Rain starting in ~${mins(slots[i]) - 15 > 0 ? mins(slots[i]) - 15 : 5} min`, p];
+}
+function sunPath() {
+  if (!sunrise) return "";
+  const f = (now - sunrise) / (sunset - sunrise), up = f >= 0 && f <= 1, t = Math.min(Math.max(f, 0), 1);
+  const x = (1 - t) ** 2 * 8 + 2 * (1 - t) * t * 155 + t * t * 302, y = (1 - t) ** 2 * 66 + 2 * (1 - t) * t * -40 + t * t * 66;
+  const nextSet = up;
+  return `<div class="glass" style="padding:12px 18px; display:flex; flex-direction:column; gap:2px">
+    <svg viewBox="0 0 310 72" width="100%" height="64" role="img" aria-label="${up ? "Sun path, sun currently up" : "Sun has set"}" style="display:block">
+      <path d="M8 66 Q155 -40 302 66" fill="none" stroke="var(--sub)" stroke-opacity=".6" stroke-width="1.5" stroke-dasharray="3 5"/>
+      <line x1="0" y1="66" x2="310" y2="66" stroke="var(--sub)" stroke-opacity=".35"/>
+      ${up ? `<circle cx="${x}" cy="${y}" r="10" fill="var(--sun)" fill-opacity=".3"/><circle cx="${x}" cy="${y}" r="5" fill="var(--sun)"/>` : ""}
+    </svg>
+    <div class="ticks" style="font-size:13px"><span ${!nextSet ? 'style="font-weight:600;color:var(--text)"' : ""}>Sunrise ${hm(sunrise)}</span>
+    <span ${nextSet ? 'style="font-weight:600;color:var(--text)"' : ""}>Sunset ${hm(sunset)}</span></div></div>`;
+}
+const [ncTitle, ncP] = nowcastText();
+document.getElementById("now").innerHTML = `
+  <div style="display:flex; align-items:center; justify-content:space-between">
+    <div style="display:flex; flex-direction:column">
+      <span style="font-size:22px; font-weight:500">${W.place.split(",")[0]}</span>
+      <span class="sub" style="font-size:14px">${now.toLocaleDateString([], { weekday:"short", month:"short", day:"numeric" })} · ${NAMES[curIcon]} · Feels like ${Math.round(feelsLike(curTemp, curWind, curRh))}°</span>
+    </div>
+    <a class="round-btn" href="#places" aria-label="Places">${svg("search", 20, 1.8)}</a>
+  </div>
+  <div style="display:flex; align-items:flex-end; justify-content:space-between; padding:2px 4px 0">
+    <div style="display:flex; flex-direction:column">
+      <span class="big">${curTemp}°</span>
+      <span class="sub" style="font-size:15px; padding-top:4px">High ${D[0].hi}° · Low ${D[0].lo}°</span>
+    </div>
+    <div class="acc" style="padding-bottom:22px">${svg(curIcon, 60, 1.2, NAMES[curIcon])}</div>
+  </div>
+  <div class="glass" style="padding:14px 18px 12px; display:flex; flex-direction:column; gap:10px">
+    <div class="row-between"><span style="font-size:17px; font-weight:500">${ncTitle}</span><span class="sub" style="font-size:13px">Next 3 hours</span></div>
+    <div class="bars" role="img" aria-label="Rain amount in 15 minute steps">
+      ${ncP.map(p => `<div style="height:${Math.max(4, Math.min(44, p / 0.04 * 44))}px; opacity:${p >= 0.002 ? 1 : 0.35}"></div>`).join("")}
+    </div>
+    <div class="ticks"><span>Now</span><span>1 h</span><span>2 h</span><span>3 h</span></div>
+  </div>
+  <div class="glass strip">
+    ${H.slice(0, 5).map((h, i) => `<div><span style="font-size:12px; ${i ? "color:var(--sub)" : "font-weight:600"}">${i ? hr(h.t) : "Now"}</span>
+      <span style="font-size:18px; font-weight:500">${i ? h.temp : curTemp}°</span><span class="acc" style="font-size:12px">${h.rain}%</span></div>`).join("")}
+  </div>
+  ${sunPath()}
+  <div class="tiles">
+    <div class="glass tile"><span class="sub" style="font-size:13px">Wind</span><span class="v">${curWind}<small> mph ${compass(home && home.wdir)}</small></span>
+      ${home && home.gust ? `<span class="sub" style="font-size:12px">Gusts ${home.gust} mph</span>` : ""}</div>
+    <div class="glass tile"><span class="sub" style="font-size:13px">Humidity</span><span class="v">${curRh}<small>%</small></span>
+      <span class="sub" style="font-size:12px">Dew point ${H[0].dewpt}°</span></div>
+  </div>
+  <span class="sub" style="font-size:12px; text-align:center">Updated ${new Date(W.updated).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}${home ? " · now from Scott AFB" : ""}</span>`;
+
+// ---------- Hourly ----------
+(() => {
+  const temps = H.map(h => h.temp), lo = Math.min(...temps), hi = Math.max(...temps), span = Math.max(hi - lo, 1);
+  const pts = temps.map((t, i) => [6 + i * 298 / (temps.length - 1), 10 + (hi - t) / span * 76]);
+  document.getElementById("hourly").innerHTML = `
+    <div class="title"><h1>Hourly</h1><span class="sub" style="font-size:14px">${W.place.split(",")[0]} · next 24 hours</span></div>
+    <div class="glass" style="padding:16px 18px 12px; display:flex; flex-direction:column; gap:8px">
+      <div class="row-between"><span class="label">TEMPERATURE</span><span class="sub" style="font-size:13px">${temps[0]}° → ${temps.at(-1)}°</span></div>
+      <svg viewBox="0 0 310 100" width="100%" height="100" role="img" aria-label="Temperature from ${temps[0]} now to ${temps.at(-1)} in 24 hours, ranging ${lo} to ${hi}" style="display:block">
+        <line x1="0" y1="96" x2="310" y2="96" stroke="var(--sub)" stroke-opacity=".35"/>
+        <polyline points="${pts.map(p => p.join(",")).join(" ")}" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="${pts[0][0]}" cy="${pts[0][1]}" r="5" fill="var(--text)"/>
+      </svg>
+      <div class="ticks">${[0, 6, 12, 18, 23].map(i => `<span>${hr(H[i].t)}</span>`).join("")}</div>
+    </div>
+    <div class="glass list">
+      ${H.map((h, i) => `<div class="hr">
+        <span style="width:50px; font-size:14px; font-weight:${i ? 400 : 600}">${i ? hr(h.t) : "Now"}</span>
+        <span class="acc" style="display:flex">${svg(iconAt(h.icon, new Date(h.t)))}</span>
+        <div style="flex:1; display:flex; align-items:center; gap:8px">
+          <div class="meter" style="width:64px"><i style="left:0; width:${h.rain}%; background:var(--accent)"></i></div>
+          <span class="sub" style="font-size:12px">${h.rain}%</span>
+        </div>
+        <span class="sub" style="font-size:12px">${h.wind} mph</span>
+        <span style="font-size:18px; font-weight:500; width:40px; text-align:right">${h.temp}°</span>
+      </div>`).join("")}
+    </div>`;
+})();
+
+// ---------- Week ----------
+(() => {
+  const lo = Math.min(...D.map(d => d.lo)), hi = Math.max(...D.map(d => d.hi)), span = Math.max(hi - lo, 1);
+  const wet = D.reduce((a, d) => d.precip > a.precip ? d : a, D[0]), gust = Math.max(...D.map(d => d.gust));
+  document.getElementById("week").innerHTML = `
+    <div class="title"><h1>This week</h1><span class="sub" style="font-size:14px">${W.place.split(",")[0]} · 7-day forecast</span></div>
+    <div class="glass list">
+      ${D.map((d, i) => { const n = (W.nws || {})[d.date]; return `<div class="wk">
+        <div style="width:58px; display:flex; flex-direction:column; white-space:nowrap"><span style="font-size:15px; font-weight:${i ? 400 : 600}">${dayName(d.date, i)}</span>
+          ${n ? `<span class="sub" style="font-size:10px" title="National Weather Service forecast">NWS ${n.hi ?? "–"}/${n.lo ?? "–"}</span>` : ""}</div>
+        <div class="acc" style="width:38px; display:flex; flex-direction:column; align-items:center">${svg(d.icon)}<span style="font-size:11px">${d.rain >= 10 ? d.rain + "%" : ""}</span></div>
+        <span class="sub" style="width:28px; font-size:14px; text-align:right">${d.lo}°</span>
+        <div class="meter" style="flex:1"><i style="left:${(d.lo - lo) / span * 100}%; width:${(d.hi - d.lo) / span * 100}%; background:var(--grad)"></i></div>
+        <span style="width:28px; font-size:15px; font-weight:600">${d.hi}°</span>
+      </div>`; }).join("")}
+    </div>
+    <div class="glass" style="padding:14px 18px; display:flex; align-items:center; gap:14px">
+      <div style="width:44px; height:44px; border-radius:22px; background:var(--accent); color:var(--onFg); display:flex; align-items:center; justify-content:center; flex:none">${svg("drop", 24, 1.8)}</div>
+      <div style="display:flex; flex-direction:column">
+        <span style="font-size:16px; font-weight:500">${wet.precip >= 0.01 ? `Wettest day: ${dayName(wet.date, D.indexOf(wet))}` : "Dry week ahead"}</span>
+        <span class="sub" style="font-size:13px">${wet.precip >= 0.01 ? `${wet.precip.toFixed(2)} in expected, ` : ""}gusts up to ${gust} mph</span>
+      </div>
+    </div>`;
+})();
+
+// ---------- Places ----------
+function renderPlaces() {
+  let pref = "auto"; try { pref = localStorage.getItem("theme") || "auto"; } catch {}
+  document.getElementById("places").innerHTML = `
+    <div class="title"><h1>Places</h1><span class="sub" style="font-size:14px">Metro East &amp; St. Louis</span></div>
+    <div style="display:flex; flex-direction:column; gap:10px">
+      <a href="#now" class="glass place home" style="color:inherit; text-decoration:none">
+        <div style="flex:1; display:flex; flex-direction:column; gap:3px"><span style="font-size:18px; font-weight:500">${W.place.split(",")[0]}</span>
+          <span class="sub" style="font-size:13px">My location · your model</span></div>
+        <span class="acc" style="display:flex">${svg(curIcon, 28, 1.5)}</span>
+        <div style="width:76px; display:flex; flex-direction:column; align-items:flex-end"><span style="font-size:30px; line-height:1; font-weight:300">${curTemp}°</span>
+          <span class="sub" style="font-size:12px">H ${D[0].hi}° L ${D[0].lo}°</span></div>
+      </a>
+      ${(W.places || []).map(p => { const ic = wmo(p.code), icn = !p.is_day && ic === "sun" ? "moon" : ic; return `<div class="glass place">
+        <div style="flex:1; display:flex; flex-direction:column; gap:3px"><span style="font-size:18px; font-weight:500">${p.name}</span>
+          <span class="sub" style="font-size:13px">${NAMES[icn]}</span></div>
+        <span class="acc" style="display:flex">${svg(icn, 28, 1.5)}</span>
+        <div style="width:76px; display:flex; flex-direction:column; align-items:flex-end"><span style="font-size:30px; line-height:1; font-weight:300">${p.temp}°</span>
+          <span class="sub" style="font-size:12px">H ${p.hi}° L ${p.lo}°</span></div>
+      </div>`; }).join("")}
+    </div>
+    <div class="glass" style="padding:14px 18px; display:flex; align-items:center; justify-content:space-between; gap:12px">
+      <span style="font-size:15px">Appearance</span>
+      <div class="seg" role="group" aria-label="Appearance">
+        ${["auto", "dark", "light"].map(v => `<button class="chip" style="height:44px; padding:0 14px" data-theme-pref="${v}" aria-pressed="${pref === v}">${v[0].toUpperCase() + v.slice(1)}</button>`).join("")}
+      </div>
+    </div>
+    <span class="sub" style="font-size:12px; text-align:center">Other places use raw model forecasts. ${W.place.split(",")[0]} uses your trained blend.</span>`;
+  document.querySelectorAll("[data-theme-pref]").forEach(b => b.onclick = () => { try { localStorage.setItem("theme", b.dataset.themePref); } catch {} applyTheme(); renderPlaces(); });
+}
+
+// ---------- theme ----------
+const darkQ = matchMedia("(prefers-color-scheme: dark)");
+function applyTheme() {
+  let pref = "auto"; try { pref = localStorage.getItem("theme") || "auto"; } catch {}
+  const t = pref === "auto" ? (darkQ.matches ? "dark" : "light") : pref;
+  document.documentElement.dataset.theme = t;
+  document.querySelector('meta[name=theme-color]').content = t === "dark" ? "#0B2233" : "#DCEBF8";
+  if (window.setBasemap) setBasemap(t);
+}
+darkQ.addEventListener("change", applyTheme);
+
+// ---------- Radar ----------
+let map, basemap, layerGroup, frames = [], showFrame = () => {}, timer = null, layer = "rain";
+const playBtn = document.getElementById("play"), slider = document.getElementById("frame");
+const PLAY = '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>';
+const PAUSE = '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/></svg>';
+function setBasemap(t) {
+  if (!map) return;
+  if (basemap) basemap.remove();
+  const name = t === "dark" ? "World_Dark_Gray" : "World_Light_Gray", base = "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/";
+  basemap = L.layerGroup([
+    L.tileLayer(base + name + "_Base/MapServer/tile/{z}/{y}/{x}", { attribution:"Tiles © Esri", maxZoom:12 }),
+    L.tileLayer(base + name + "_Reference/MapServer/tile/{z}/{y}/{x}", { pane:"shadowPane", maxZoom:12 }),
+  ]).addTo(map);
+}
+function play(on) {
+  clearInterval(timer); timer = null;
+  playBtn.innerHTML = on ? PAUSE : PLAY; playBtn.setAttribute("aria-label", on ? "Pause animation" : "Play animation");
+  if (on) timer = setInterval(() => { slider.value = (+slider.value + 1) % (+slider.max + 1); step(); }, 600);
+}
+function step() { showFrame(+slider.value); document.getElementById("tcur").textContent = frames[+slider.value]; }
+slider.oninput = () => { play(false); step(); };
+playBtn.onclick = () => play(!timer);
+
+const lerp = (stops, v) => {
+  if (v <= stops[0][0]) return stops[0][1];
+  for (let i = 1; i < stops.length; i++) if (v <= stops[i][0]) {
+    const [a, ca] = stops[i - 1], [b, cb] = stops[i], t = (v - a) / (b - a);
+    return ca.map((x, j) => Math.round(x + (cb[j] - x) * t));
+  }
+  return stops.at(-1)[1];
+};
+const RAIN = [[0.005,[60,200,80,0]],[0.01,[60,200,80,200]],[0.1,[30,140,50,230]],[0.25,[250,220,40,240]],[0.5,[240,120,30,255]],[1,[220,30,30,255]]];
+const ICE = [[0.005,[250,140,170,0]],[0.01,[250,140,170,210]],[0.2,[220,40,110,255]]];
+const SNOW = [[0.005,[150,190,255,0]],[0.01,[150,190,255,210]],[0.1,[60,90,230,255]],[0.3,[230,240,255,255]]];
+const TEMP_PAL = [[0,[40,160,90,255]],[0.35,[130,200,60,255]],[0.65,[235,215,60,255]],[1,[235,120,40,255]]];
+const WIND_PAL = [[0,[90,60,60,60]],[0.4,[200,90,50,200]],[0.75,[210,50,40,240]],[1,[130,0,50,255]]];
+const range = a => { const v = a.flat(); return [Math.min(...v), Math.max(...v)]; };
+
+// grid -> smooth image overlay (values bilinear-interpolated onto an 8x canvas). ponytail: lat/lon grid stretched onto Web Mercator; fine over 2° of latitude.
+function gridImage(values, color) {
+  const g = W.grid, S = 8, wd = (g.cols - 1) * S + 1, ht = (g.rows - 1) * S + 1, c = document.createElement("canvas");
+  c.width = wd; c.height = ht;
+  const ctx = c.getContext("2d"), img = ctx.createImageData(wd, ht);
+  for (let y = 0; y < ht; y++) for (let x = 0; x < wd; x++) {
+    const fr = (ht - 1 - y) / S, fk = x / S, r = Math.min(Math.floor(fr), g.rows - 2), k = Math.min(Math.floor(fk), g.cols - 2);
+    const a = fr - r, b = fk - k; // row 0 is the south edge
+    const v = (1 - a) * ((1 - b) * values[r][k] + b * values[r][k + 1]) + a * ((1 - b) * values[r + 1][k] + b * values[r + 1][k + 1]);
+    img.data.set(color(v, Math.round(fr), Math.round(fk)), (y * wd + x) * 4);
+  }
+  ctx.putImageData(img, 0, 0);
+  const [s, w, n, e] = g.bbox;
+  return L.imageOverlay(c.toDataURL(), [[s, w], [n, e]], { opacity:0.75 });
+}
+function stationLabels(fmt) {
+  for (const o of W.obs || []) L.marker([o.lat, o.lon], { icon:L.divIcon({ className:"", html:`<div class="stn">${fmt(o)}</div>` }) }).addTo(layerGroup);
+}
+const LAYERS = {
+  rain() {
+    // one timeline: past radar (IEM 5-min NEXRAD composites) then HRRR future precip
+    const past = ["m50m","m40m","m30m","m20m","m10m",""], t0 = Date.now();
+    const radar = past.map(s => L.tileLayer(`https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913${s && "-" + s}/{z}/{x}/{y}.png`, { opacity:0 }).addTo(layerGroup));
+    const g = W.grid, future = g ? g.precip.slice(1).map((p, t) => gridImage(p, (v, r, k) => lerp([RAIN, ICE, SNOW][g.ptype[t + 1][r][k] - 1], v)).setOpacity(0).addTo(layerGroup)) : [];
+    const all = [...radar, ...future];
+    frames = [...past.map(s => s ? `−${parseInt(s.slice(1))} min` : "Now"), ...(g ? g.times.slice(1).map(t => hr(t)) : [])];
+    showFrame = i => all.forEach((l, j) => l.setOpacity(j === i ? (j < radar.length ? 0.75 : 0.8) : 0));
+    slider.max = all.length - 1; slider.value = radar.length - 1; step();
+    document.getElementById("t0").textContent = "−50 min"; document.getElementById("t1").textContent = g ? `+${g.times.length - 1} h` : "";
+    document.getElementById("player").hidden = false;
+    document.getElementById("radarSub").textContent = "Past hour of radar, then your futurecast";
+    return `<span>Light</span><div style="flex:1; height:8px; border-radius:4px; background:linear-gradient(90deg,#3cc850,#faDC28,#dc1e1e)"></div><span>Heavy</span>
+      <span style="display:inline-block; width:10px; height:10px; border-radius:5px; background:#dc286e"></span><span>Ice</span>
+      <span style="display:inline-block; width:10px; height:10px; border-radius:5px; background:#3c5ae6"></span><span>Snow</span>`;
+  },
+  temp() {
+    const [lo, hi] = range(W.grid.temp);
+    gridImage(W.grid.temp, v => lerp(TEMP_PAL, (v - lo) / Math.max(hi - lo, 1))).setOpacity(0.6).addTo(layerGroup);
+    stationLabels(o => `${o.temp}°`);
+    document.getElementById("radarSub").textContent = "Current temperatures at area airports";
+    return `<span>${Math.round(lo)}°</span><div style="flex:1; height:8px; border-radius:4px; background:linear-gradient(90deg,rgb(40,160,90),rgb(130,200,60),rgb(235,215,60),rgb(235,120,40))"></div><span>${Math.round(hi)}°</span>`;
+  },
+  wind() {
+    const [lo, hi] = range(W.grid.wind);
+    gridImage(W.grid.wind, v => lerp(WIND_PAL, (v - lo) / Math.max(hi - lo, 1))).setOpacity(0.6).addTo(layerGroup);
+    stationLabels(o => `${o.wind}${o.gust ? ` <b>${o.gust}</b>` : ""}`);
+    document.getElementById("radarSub").textContent = "Wind now · mph, gusts in yellow";
+    return `<span>${Math.round(lo)} mph</span><div style="flex:1; height:8px; border-radius:4px; background:linear-gradient(90deg,rgb(90,60,60),rgb(200,90,50),rgb(210,50,40),rgb(130,0,50))"></div><span>${Math.round(hi)} mph</span>`;
+  },
+};
+function showLayer(name) {
+  layer = name; play(false); layerGroup.clearLayers(); document.getElementById("player").hidden = true;
+  document.querySelectorAll(".chip[data-layer]").forEach(b => b.setAttribute("aria-pressed", b.dataset.layer === name));
+  document.getElementById("legend").innerHTML = name !== "rain" && !W.grid ? "Map data unavailable this update." : LAYERS[name]();
+}
+function initMap() {
+  if (map) { map.invalidateSize(); return; }
+  map = L.map("map", { zoomControl:false, attributionControl:true, minZoom:6 }).setView([38.55, -90.1], 8);
+  setBasemap(document.documentElement.dataset.theme);
+  layerGroup = L.layerGroup().addTo(map);
+  L.circleMarker([W.lat, W.lon], { radius:6, color:"#fff", fillColor:"#FFD58A", fillOpacity:1, weight:2 }).addTo(map).bindTooltip(W.place.split(",")[0]);
+  document.querySelectorAll(".chip[data-layer]").forEach(b => b.onclick = () => showLayer(b.dataset.layer));
+  showLayer("rain");
+}
+
+// ---------- tabs ----------
+const TABS = [["now","Now","sun"],["hourly","Hourly",null],["week","Week",null],["radar","Radar",null],["places","Places",null]];
+const TAB_D = {
+  now: P.sun, hourly: 'M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zM12 7.5V12l3 2',
+  week: 'M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zM4 10h16M9 3v4M15 3v4',
+  radar: 'M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zM12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zM12 12l5-5',
+  places: 'M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11zM12 7.8a2.2 2.2 0 1 0 0 4.4 2.2 2.2 0 0 0 0-4.4z',
+};
+document.getElementById("tabs").innerHTML = TABS.map(([id, label]) =>
+  `<a href="#${id}"><svg class="i" width="20" height="20" viewBox="0 0 24 24" stroke-width="1.8" aria-hidden="true"><path d="${TAB_D[id]}"/></svg>${label}</a>`).join("");
+function route() {
+  const id = TABS.some(t => t[0] === location.hash.slice(1)) ? location.hash.slice(1) : "now";
+  document.querySelectorAll(".screen").forEach(s => s.classList.toggle("on", s.id === id));
+  document.querySelectorAll("nav a").forEach(a => a.getAttribute("href") === "#" + id ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
+  if (id !== "radar") play(false); else initMap();
+  window.scrollTo(0, 0);
+}
+addEventListener("hashchange", route);
+
+applyTheme(); renderPlaces(); route();
+setTimeout(() => location.reload(), 10 * 60 * 1000); // pick up the next update.py run
+</script>
+</body>
+</html>

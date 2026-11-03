@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Metro East Weather</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="data.js"></script>
+<style>
+  :root { --bg:#0e1420; --panel:#162033; --card:#1d6fd6; --card2:#1558ad; --text:#eef3fb; --muted:#9fb0c8; --accent:#ffd34d; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.4 system-ui, "Segoe UI", sans-serif; }
+  header { display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; padding:16px 20px 8px; }
+  header h1 { margin:0; font-size:22px; }
+  header .now { font-size:40px; font-weight:700; }
+  header .meta { color:var(--muted); font-size:13px; }
+  main { max-width:1200px; margin:0 auto; padding:0 16px 32px; }
+  h2 { font-size:15px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:24px 0 8px; }
+  .tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
+  .tabs button { background:var(--panel); color:var(--text); border:1px solid #2a3a57; border-radius:6px; padding:7px 14px; font:inherit; cursor:pointer; }
+  .tabs button[aria-pressed=true] { background:var(--card); border-color:var(--card); }
+  #map { height:min(62vh,560px); border-radius:10px; background:#222; }
+  .player { display:flex; align-items:center; gap:10px; margin-top:8px; min-height:34px; }
+  .player button { background:var(--panel); color:var(--text); border:1px solid #2a3a57; border-radius:6px; padding:5px 12px; cursor:pointer; font:inherit; }
+  .player input { flex:1; }
+  .player[hidden] { display:none; }
+  .legend { display:flex; gap:12px; font-size:12px; color:var(--muted); flex-wrap:wrap; }
+  .legend i { display:inline-block; width:28px; height:10px; border-radius:2px; vertical-align:middle; margin-right:4px; }
+  .row { display:grid; grid-auto-flow:column; grid-auto-columns:minmax(92px,1fr); gap:6px; overflow-x:auto; padding-bottom:6px; }
+  .card { background:linear-gradient(var(--card),var(--card2)); border-radius:8px; padding:10px 8px; text-align:center; }
+  .card .big { font-size:28px; font-weight:700; }
+  .card .ico { font-size:30px; line-height:1.2; }
+  .card .pct { color:#cfe3ff; font-size:13px; min-height:18px; }
+  .card .lbl { font-weight:700; font-size:15px; margin-top:2px; }
+  .card .lo { color:#b9d2f5; font-size:18px; margin-left:4px; }
+  .card .nws { margin-top:6px; padding-top:6px; border-top:1px solid #ffffff33; font-size:12px; color:#cfe3ff; }
+  .stn { background:#000a; color:#fff; border-radius:4px; padding:1px 5px; font-weight:700; font-size:13px; white-space:nowrap; text-align:center; transform:translate(-50%,-50%); width:max-content; }
+  .stn small { display:block; font-weight:400; font-size:10px; opacity:.85; }
+  .stn b { color:var(--accent); }
+  footer { color:var(--muted); font-size:12px; margin-top:24px; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="place"></h1><span class="now" id="now"></span><span class="meta" id="meta"></span>
+</header>
+<main>
+  <div class="tabs" role="group" aria-label="Map layer">
+    <button data-layer="radar">Radar</button>
+    <button data-layer="futurecast">Futurecast</button>
+    <button data-layer="temps">Temperatures</button>
+    <button data-layer="wind">Wind / Gusts</button>
+  </div>
+  <div id="map"></div>
+  <div class="player" id="player" hidden>
+    <button id="play" aria-label="Play or pause">⏸</button>
+    <input type="range" id="frame" min="0" value="0" aria-label="Frame">
+    <span id="ftime"></span>
+  </div>
+  <div class="legend" id="legend"></div>
+
+  <h2>Hourly</h2>
+  <div class="row" id="hourly"></div>
+
+  <h2>7-day <span style="text-transform:none;letter-spacing:0">(bottom line: NWS, for comparison)</span></h2>
+  <div class="row" id="daily"></div>
+
+  <footer>
+    Your forecast: a learned blend of GFS, ECMWF, ECMWF-AIFS, ICON, GEM, UKMO and NBM, trained on Scott AFB (KBLV) observations.
+    Radar: NWS NEXRAD via Iowa Environmental Mesonet. Futurecast / map shading: HRRR via Open-Meteo. Stations: aviationweather.gov.
+  </footer>
+</main>
+<script>
+const W = window.WX;
+const ICON = { sun:"☀️", partly:"⛅", cloudy:"☁️", rain:"🌧️", storm:"⛈️", snow:"🌨️" };
+const t12 = iso => new Date(iso).toLocaleTimeString([], { hour:"numeric" });
+const dow = d => new Date(d + "T12:00").toLocaleDateString([], { weekday:"short" }).toUpperCase();
+
+// ---------- header + cards ----------
+document.getElementById("place").textContent = W.place;
+const home = (W.obs || []).find(o => o.id === "KBLV");
+document.getElementById("now").textContent = (home ? home.temp : W.hourly[0].temp) + "°";
+document.getElementById("meta").textContent =
+  (home ? "Scott AFB now · " : "") + "updated " + new Date(W.updated).toLocaleString([], { weekday:"short", hour:"numeric", minute:"2-digit" });
+
+document.getElementById("hourly").innerHTML = W.hourly.map(h => `
+  <div class="card"><div class="big">${h.temp}°</div><div class="ico">${ICON[h.icon]}</div>
+  <div class="pct">${h.rain >= 10 ? h.rain + "%" : ""}</div><div class="lbl">${t12(h.t)}</div></div>`).join("");
+
+document.getElementById("daily").innerHTML = W.daily.map(d => {
+  const n = (W.nws || {})[d.date];
+  return `<div class="card"><div><span class="big">${d.hi}</span><span class="lo">${d.lo}</span></div>
+  <div class="ico">${ICON[d.icon]}</div><div class="pct">${d.rain >= 10 ? d.rain + "%" : ""}</div>
+  <div class="lbl">${dow(d.date)}</div>
+  <div class="nws">${n ? `NWS ${n.hi ?? "–"} / ${n.lo ?? "–"}${n.rain >= 10 ? " · " + n.rain + "%" : ""}` : "NWS –"}</div></div>`;
+}).join("");
+
+// ---------- map ----------
+const map = L.map("map", { zoomSnap:0.25, minZoom:7, scrollWheelZoom:false }).setView([38.55, -90.3], 8);
+const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/";
+L.tileLayer(ESRI + "World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}", { attribution:"Tiles © Esri", maxZoom:12 }).addTo(map);
+L.tileLayer(ESRI + "World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}", { pane:"shadowPane", maxZoom:12 }).addTo(map); // labels above weather layers
+L.circleMarker([W.lat, W.lon], { radius:5, color:"#fff", fillColor:"#ffd34d", fillOpacity:1, weight:2 }).addTo(map).bindTooltip("Home");
+
+let active = L.layerGroup().addTo(map), timer = null, frames = [], showFrame = () => {};
+const player = document.getElementById("player"), slider = document.getElementById("frame"), ftime = document.getElementById("ftime");
+const playBtn = document.getElementById("play");
+
+function animate(n, show, labels) {
+  frames = labels; showFrame = show;
+  slider.max = n - 1; slider.value = 0; player.hidden = false;
+  show(0); ftime.textContent = labels[0];
+  play(true);
+}
+function play(on) {
+  clearInterval(timer); timer = null; playBtn.textContent = on ? "⏸" : "▶";
+  if (on) timer = setInterval(() => { slider.value = (+slider.value + 1) % (+slider.max + 1); step(); }, 700);
+}
+function step() { showFrame(+slider.value); ftime.textContent = frames[+slider.value]; }
+slider.oninput = () => { play(false); step(); };
+playBtn.onclick = () => play(!timer);
+
+// grid -> smooth colored image overlay. ponytail: lat/lon grid stretched onto Web Mercator; fine over 2° of latitude.
+function gridImage(values, color) {
+  // bilinear-interpolate the values (not the colors) onto an 8x canvas so edges come out as smooth contours
+  const g = W.grid, S = 8, wd = (g.cols - 1) * S + 1, ht = (g.rows - 1) * S + 1, c = document.createElement("canvas");
+  c.width = wd; c.height = ht;
+  const ctx = c.getContext("2d"), img = ctx.createImageData(wd, ht);
+  for (let y = 0; y < ht; y++) for (let x = 0; x < wd; x++) {
+    const fr = (ht - 1 - y) / S, fk = x / S, r = Math.min(Math.floor(fr), g.rows - 2), k = Math.min(Math.floor(fk), g.cols - 2);
+    const a = fr - r, b = fk - k; // row 0 is the south edge
+    const v = (1 - a) * ((1 - b) * values[r][k] + b * values[r][k + 1]) + a * ((1 - b) * values[r + 1][k] + b * values[r + 1][k + 1]);
+    img.data.set(color(v, Math.round(fr), Math.round(fk)), (y * wd + x) * 4);
+  }
+  ctx.putImageData(img, 0, 0);
+  const [s, w, n, e] = g.bbox;
+  return L.imageOverlay(c.toDataURL(), [[s, w], [n, e]], { opacity:0.75 });
+}
+const lerp = (stops, v) => {
+  if (v <= stops[0][0]) return stops[0][1];
+  for (let i = 1; i < stops.length; i++) if (v <= stops[i][0]) {
+    const [a, ca] = stops[i - 1], [b, cb] = stops[i], t = (v - a) / (b - a);
+    return ca.map((x, j) => Math.round(x + (cb[j] - x) * t));
+  }
+  return stops.at(-1)[1];
+};
+// temps colored relative to today's range (cool green -> hot orange) so a 10° spread is visible, like TV maps
+const TEMP_PAL = [[0,[40,160,90,255]],[0.35,[130,200,60,255]],[0.65,[235,215,60,255]],[1,[235,120,40,255]]];
+const range = a => { const v = a.flat(); return [Math.min(...v), Math.max(...v)]; };
+const WIND_PAL = [[0,[90,60,60,60]],[0.4,[200,90,50,200]],[0.75,[210,50,40,240]],[1,[130,0,50,255]]];
+const RAIN = [[0.005,[60,200,80,0]],[0.01,[60,200,80,200]],[0.1,[30,140,50,230]],[0.25,[250,220,40,240]],[0.5,[240,120,30,255]],[1,[220,30,30,255]]];
+const ICE = [[0.005,[250,140,170,0]],[0.01,[250,140,170,210]],[0.2,[220,40,110,255]]];
+const SNOW = [[0.005,[150,190,255,0]],[0.01,[150,190,255,210]],[0.1,[60,90,230,255]],[0.3,[230,240,255,255]]];
+
+function stationLabels(fmt) {
+  for (const o of W.obs || []) L.marker([o.lat, o.lon], { icon:L.divIcon({ className:"", html:`<div class="stn">${fmt(o)}<small>${o.name.replace(/^St Louis\//, "")}</small></div>` }) }).addTo(active);
+}
+const swatches = list => list.map(([lbl, css]) => `<span><i style="background:${css}"></i>${lbl}</span>`).join("");
+
+const LAYERS = {
+  radar() {
+    // IEM keeps 5-minute NEXRAD composites; m50m..m05m are past frames, plain is latest
+    const steps = ["m50m","m40m","m30m","m20m","m10m",""], now = Date.now();
+    const layers = steps.map(s => L.tileLayer(`https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913${s && "-" + s}/{z}/{x}/{y}.png`, { opacity:0 }).addTo(active));
+    animate(layers.length, i => layers.forEach((l, j) => l.setOpacity(j === i ? 0.75 : 0)),
+      steps.map(s => s ? new Date(now - parseInt(s.slice(1)) * 60000).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" }) : "Latest"));
+    return swatches([["Light","#04e9e7"],["Moderate","#01c501"],["Heavy","#fdf802"],["Intense","#fd0000"],["Extreme","#f800fd"]]);
+  },
+  futurecast() {
+    const g = W.grid;
+    const layers = g.precip.map((p, t) => gridImage(p, (v, r, k) => lerp([RAIN, ICE, SNOW][g.ptype[t][r][k] - 1], v)).setOpacity(0).addTo(active));
+    animate(layers.length, i => layers.forEach((l, j) => l.setOpacity(j === i ? 0.8 : 0)),
+      g.times.map(t => new Date(t).toLocaleString([], { weekday:"short", hour:"numeric" })));
+    return swatches([["Rain light→heavy","linear-gradient(90deg,#3cc850,#faDC28,#dc1e1e)"],["Freezing / glaze","linear-gradient(90deg,#fa8caa,#dc286e)"],["Snow","linear-gradient(90deg,#96beff,#3c5ae6,#f0f5ff)"]]);
+  },
+  temps() {
+    const [lo, hi] = range(W.grid.temp);
+    gridImage(W.grid.temp, v => lerp(TEMP_PAL, (v - lo) / Math.max(hi - lo, 1))).setOpacity(0.6).addTo(active);
+    stationLabels(o => `${o.temp}°`);
+    return swatches([[`${Math.round(lo)}° → ${Math.round(hi)}°`, "linear-gradient(90deg,rgb(40,160,90),rgb(130,200,60),rgb(235,215,60),rgb(235,120,40))"]]);
+  },
+  wind() {
+    const [lo, hi] = range(W.grid.wind);
+    gridImage(W.grid.wind, v => lerp(WIND_PAL, (v - lo) / Math.max(hi - lo, 1))).setOpacity(0.6).addTo(active);
+    stationLabels(o => `${o.wind}${o.gust ? ` <b>${o.gust}</b>` : ""}`);
+    return `mph: white = sustained, <b style='color:#ffd34d'>yellow</b> = gusts · shading ${Math.round(lo)} → ${Math.round(hi)} mph forecast`;
+  },
+};
+
+function show(name) {
+  play(false); player.hidden = true; active.clearLayers();
+  document.querySelectorAll(".tabs button").forEach(b => b.setAttribute("aria-pressed", b.dataset.layer === name));
+  const needsGrid = name !== "radar" && !W.grid, needsObs = (name === "temps" || name === "wind") && !W.obs;
+  document.getElementById("legend").innerHTML = needsGrid ? "Map data unavailable this update." : LAYERS[name]();
+  try { localStorage.setItem("layer", name); } catch {}
+}
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => show(b.dataset.layer));
+let saved = "radar"; try { saved = localStorage.getItem("layer") || "radar"; } catch {}
+show(LAYERS[saved] ? saved : "radar");
+</script>
+</body>
+</html>
