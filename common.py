@@ -1,5 +1,6 @@
 """Shared config + feature building for train.py and update.py."""
 import json
+import time
 import urllib.request
 
 import numpy as np
@@ -18,10 +19,16 @@ UNITS = "&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inc
 TARGETS = {"temp": "temperature_2m", "dewpt": "dew_point_2m", "wind": "wind_speed_10m"}
 
 
-def get_json(url):
+def get_json(url, tries=3):
     req = urllib.request.Request(url, headers={"User-Agent": "stl-weather-hobby"})
-    with urllib.request.urlopen(req, timeout=120) as r:
-        return json.load(r)
+    for i in range(tries):  # free APIs occasionally time out from shared CI runners
+        try:
+            with urllib.request.urlopen(req, timeout=120) as r:
+                return json.load(r)
+        except OSError:
+            if i == tries - 1:
+                raise
+            time.sleep(5 * (i + 1))
 
 
 def model_frame(d):
